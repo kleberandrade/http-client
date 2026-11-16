@@ -172,3 +172,9 @@ UpgradeLog*.htm
 
 # Microsoft Fakes
 FakesAssemblies
+# Local SDK and tooling caches
+.tools/
+.vs/
+.idea/
+.DS_Store
+*.nupkg

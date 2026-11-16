@@ -1,0 +1,23 @@
+name: build-and-test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore HTTPClient.sln --locked-mode
+      - run: dotnet build HTTPClient.sln -c Release --no-restore
+      - run: dotnet test HTTPClient.sln -c Release --no-build --no-restore
+      - run: dotnet run --project examples/LocalDemo -c Release --no-build
+      - run: dotnet pack HTTPClient/HTTPClient.csproj -c Release --no-build --no-restore

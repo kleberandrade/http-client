@@ -1,104 +1,67 @@
-using System;
-using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 
-namespace HttpClient.Core
+namespace HttpClient.Core;
+
+/// <summary>A buffered text response. Repeated headers retain their individual values.</summary>
+public class Response
 {
-	public class Response
-	{
-		public string Version { get; set; }
-		public int Code { get; set; }
-		public string Message { get; set; }
-		public string Body { get; set; }
-		private IDictionary<string, string> headers = new Dictionary<string, string> ();
+    private readonly Dictionary<string, List<string>> headers = new(StringComparer.OrdinalIgnoreCase);
+    public string Version { get; set; }
+    public int Code { get; set; }
+    public string Message { get; set; }
+    public string Body { get; set; } = "";
+    public bool IsSuccessStatusCode => Code >= 200 && Code <= 299;
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Headers =>
+        headers.ToDictionary(p => p.Key, p => (IReadOnlyList<string>)p.Value.AsReadOnly(), StringComparer.OrdinalIgnoreCase);
 
-		public Response (string response)
-		{
-			this.StartResponseLine (response);
-			this.StartHeaders (response);
-			this.StartBody (response);
-		}
-
-        public Response(string version, int code, string message)
+    /// <summary>Parses a complete, already decoded HTTP/1.x text response, not wire framing.</summary>
+    public Response(string response)
+    {
+        if (response is null) throw new ArgumentNullException(nameof(response));
+        int separator = response.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        if (separator < 0) throw new FormatException("Missing HTTP header terminator.");
+        var lines = response.Substring(0, separator).Split(new[] { "\r\n" }, StringSplitOptions.None);
+        var status = lines[0].Split(new[] { ' ' }, 3);
+        if (status.Length < 2 || (status[0] != HTTPVersion.HTTP10 && status[0] != HTTPVersion.HTTP11) ||
+            status[1].Length != 3 || !int.TryParse(status[1], NumberStyles.None, CultureInfo.InvariantCulture, out int code) || code < 100 || code > 599)
+            throw new FormatException("Invalid HTTP status line.");
+        Version = status[0];
+        Code = code;
+        Message = status.Length == 3 ? status[2] : "";
+        for (int i = 1; i < lines.Length; i++)
         {
-            this.Version = version;
-            this.Code = code;
-            this.Message = message;
+            int colon = lines[i].IndexOf(':');
+            if (colon <= 0) throw new FormatException("Invalid HTTP header.");
+            try { AddHeader(lines[i].Substring(0, colon), lines[i].Substring(colon + 1).Trim(' ', '\t')); }
+            catch (ArgumentException ex) { throw new FormatException("Invalid HTTP header.", ex); }
         }
+        Body = response.Substring(separator + 4);
+    }
 
-		public void AddHeader(string header, string value)
-		{
-			this.headers.Add (header, value);
-		}
+    public Response(string version, int code, string message)
+    {
+        Version = version;
+        Code = code;
+        Message = message;
+    }
 
-		public void ClearHeaders()
-		{
-			this.headers.Clear ();
-		}
+    public void AddHeader(string header, string value)
+    {
+        Request.ValidateHeader(header, value);
+        if (!headers.TryGetValue(header, out var values)) headers.Add(header, values = new List<string>());
+        values.Add(value);
+    }
 
-		public override string ToString ()
-		{
-			StringBuilder response = new StringBuilder ();
-			response.Append (CreateResponseLine ());
-			response.Append (CreateHeaders ());
-			response.Append (this.Body);
-			return response.ToString ();
-		}
+    public void ClearHeaders() => headers.Clear();
 
-		private string[] DivideResponse(string response)
-		{
-			return response.Split (new string[] { "\r\n\r\n" }, StringSplitOptions.None); 
-		}
-
-		private void StartResponseLine(string response)
-		{
-			string line = DivideResponse(response)[0].Split (new string[] { "\r\n" }, StringSplitOptions.None)[0];
-			string[] words = line.Split (new string[] { " " }, 3, StringSplitOptions.None);
-			this.Version = words [0];
-			this.Code = int.Parse(words [1]);
-			this.Message = words [2];
-		}
-
-		private void StartHeaders(string response)
-		{
-			string[] headers = DivideResponse (response)[0].Split(new string[] { "\r\n" }, StringSplitOptions.None);
-			for (int i = 1; i < headers.Length; i++)
-			{
-				string[] header = headers[i].Split (new string[] { ": " }, StringSplitOptions.None);
-				this.AddHeader (header [0], header [1]);
-			}
-		}
-
-		private void StartBody(string response)
-		{
-			this.Body = DivideResponse (response) [1];
-		}
-
-		private string CreateResponseLine()
-		{
-			StringBuilder responseLine = new StringBuilder ();
-			return responseLine.Append (this.Version)
-							   .Append (' ')
-							   .Append (this.Code)
-							   .Append (' ')
-							   .Append (this.Message)
-							   .Append ("\r\n")
-							   .ToString();
-		}
-
-		private string CreateHeaders()
-		{
-			StringBuilder responseHeaders = new StringBuilder ();
-
-			foreach (KeyValuePair<string, string> header in this.headers)
-				responseHeaders.Append (header.Key)
-							   .Append (": ")
-							   .Append (header.Value)
-							   .Append ("\r\n");
-			responseHeaders.Append ("\r\n");
-
-			return responseHeaders.ToString ();
-		}
-	}
+    /// <summary>Returns decoded diagnostic text; this is not a wire-format serializer.</summary>
+    public override string ToString()
+    {
+        var output = new StringBuilder($"{Version} {Code} {Message}\r\n");
+        foreach (var header in headers)
+            foreach (var value in header.Value)
+                output.Append($"{header.Key}: {value}\r\n");
+        return output.Append("\r\n").Append(Body).ToString();
+    }
 }
-

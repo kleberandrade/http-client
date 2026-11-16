@@ -1,47 +1,51 @@
-using System;
-using System.Collections.Generic;
 using System.Net;
-using System.Net.Sockets;
-using System.IO;
+using Transport = System.Net.Http.HttpClient;
 
-namespace HttpClient.Core
+namespace HttpClient.Core;
+
+/// <summary>Executes requests using the platform's HTTP and TLS implementation.</summary>
+public class HttpClient
 {
-	public class HttpClient
-	{
-		private Request request = null;
-		private Response response = null;
-		 
-		public HttpClient(Request request)
-		{
-            this.request = request;
-		}
+    private static readonly Transport SharedTransport = new(new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+    }) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
 
-		public Response Request()
-		{
-            
-			TcpClient client = null;
-			NetworkStream stream = null;
-			StreamWriter writer = null;
-			StreamReader reader = null;
+    private readonly Request request;
+    private readonly Transport transport;
 
-            client = new TcpClient(this.request.Uri.Host, this.request.Uri.Port);
-            
-            if (client == null)
-                return null;
+    /// <summary>Overall deadline, including reading the response body. Defaults to 100 seconds.</summary>
+    public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(100);
 
-			stream = client.GetStream();
-            if (stream == null)
-                return null;
+    public HttpClient(Request request) : this(request, SharedTransport) { }
 
-            writer = new StreamWriter(stream);
-			writer.Write(this.request.ToString());
-            writer.Flush();
+    /// <summary>The caller retains ownership of an injected transport and its configuration.</summary>
+    public HttpClient(Request request, Transport transport)
+    {
+        this.request = request ?? throw new ArgumentNullException(nameof(request));
+        this.transport = transport ?? throw new ArgumentNullException(nameof(transport));
+    }
 
-            reader = new StreamReader(stream);
-            this.response = new Response(reader.ReadToEnd());
+    public Response Request() => RequestAsync().GetAwaiter().GetResult();
 
-			return this.response;
-		}
-	}
+    public async Task<Response> RequestAsync(CancellationToken cancellationToken = default)
+    {
+        if (Timeout <= TimeSpan.Zero && Timeout != System.Threading.Timeout.InfiniteTimeSpan)
+            throw new ArgumentOutOfRangeException(nameof(Timeout));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(Timeout);
+        using var message = request.CreateMessage();
+        using var response = await transport.SendAsync(message, deadline.Token).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        var result = new Response($"HTTP/{response.Version}", (int)response.StatusCode, response.ReasonPhrase ?? "")
+        {
+            Body = body
+        };
+        foreach (var header in response.Headers.Concat(response.Content.Headers))
+            foreach (var value in header.Value)
+                result.AddHeader(header.Key, value);
+        return result;
+    }
 }
-

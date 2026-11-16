@@ -1,131 +1,127 @@
-using System;
-using System.Collections.Generic;
-using System.Net;
+using System.Net.Http;
 using System.Text;
 
-namespace HttpClient.Core
+namespace HttpClient.Core;
+
+/// <summary>A mutable HTTP request with query parameters and a URL-encoded form.</summary>
+public class Request
 {
-	public class Request
-	{
-        public Uri Uri { get; set; }
-        public string Method { get; set; }
-        public string Version { get; set; }
-		private Dictionary<string, string> getParameters = new Dictionary<string, string>();
-		private Dictionary<string, string> postParameters = new Dictionary<string, string>();
-		private Dictionary<string, string> headers = new Dictionary<string, string>();
-		 
-		public Request (string url)
-		{
-			this.Uri = new Uri (url);
-			this.Method = HTTPMethod.GET;
-			this.Version = HTTPVersion.HTTP11;
-			this.AddHeader ("Host", this.Uri.Host);
-		}
+    private readonly Dictionary<string, string> getParameters = new();
+    private readonly Dictionary<string, string> postParameters = new();
+    private readonly Dictionary<string, string> headers = new(StringComparer.OrdinalIgnoreCase);
 
-		public Request (string url, string method)
-		{
-			this.Uri = new Uri (url);
-			this.Method = method;
-			this.Version = HTTPVersion.HTTP11;
-			this.AddHeader ("Host", this.Uri.Host);
-		}
+    public Uri Uri { get; set; }
+    public string Method { get; set; }
+    public string Version { get; set; }
+    public IReadOnlyDictionary<string, string> Headers => headers;
 
-		public Request (string url, string method, string version)
-		{
-			this.Uri = new Uri (url);
-			this.Method = method;
-			this.Version = version;
-			this.AddHeader ("Host", this.Uri.Host);
-		}
+    public Request(string url) : this(url, HTTPMethod.GET) { }
+    public Request(string url, string method) : this(url, method, HTTPVersion.HTTP11) { }
+    public Request(string url, string method, string version)
+    {
+        Uri = new Uri(url, UriKind.Absolute);
+        Method = method;
+        Version = version;
+        Validate();
+    }
 
-		public void AddHeader(string header, string value)
-		{
-			this.headers.Add (header, value);
-		}
+    public void AddHeader(string header, string value)
+    {
+        ValidateHeader(header, value);
+        headers.Add(header, value);
+    }
 
-		public void ClearHeaders()
-		{
-			this.headers.Clear ();
-		}
+    public void ClearHeaders() => headers.Clear();
+    public void AddGetParameter(string parameter, string value) => getParameters.Add(parameter, value);
+    public void ClearGetParameters() => getParameters.Clear();
+    public void AddPostParameter(string parameter, string value) => postParameters.Add(parameter, value);
+    public void ClearPostParameters() => postParameters.Clear();
 
-		public void AddGetParameter(string parameter, string value)
-		{
-			this.getParameters.Add (parameter, value);
-		}
+    internal HttpRequestMessage CreateMessage()
+    {
+        Validate();
+        var message = new HttpRequestMessage(new HttpMethod(Method), BuildUri())
+        {
+            Version = Version == HTTPVersion.HTTP10 ? new Version(1, 0) : new Version(1, 1)
+        };
+        try
+        {
+            if (postParameters.Count > 0)
+                message.Content = new FormUrlEncodedContent(postParameters);
+            foreach (var header in headers)
+            {
+                // Framing belongs to the transport, not to caller-supplied text.
+                if (header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+                    header.Key.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("Content-Length and Transfer-Encoding are managed by the transport.");
+                if (header.Key.StartsWith("Content-", StringComparison.OrdinalIgnoreCase))
+                {
+                    message.Content ??= new ByteArrayContent(Array.Empty<byte>());
+                    message.Content.Headers.Remove(header.Key);
+                    message.Content.Headers.Add(header.Key, header.Value);
+                }
+                else
+                    message.Headers.Add(header.Key, header.Value);
+            }
+            return message;
+        }
+        catch
+        {
+            message.Dispose();
+            throw;
+        }
+    }
 
-		public void ClearGetParameters()
-		{
-			this.getParameters.Clear ();
-		}
+    private Uri BuildUri()
+    {
+        var builder = new UriBuilder(Uri) { Fragment = "" };
+        var query = builder.Query.TrimStart('?');
+        var extra = Encode(getParameters);
+        builder.Query = query.Length == 0 ? extra : query + (extra.Length == 0 ? "" : "&" + extra);
+        return builder.Uri;
+    }
 
-		public void AddPostParameter(string parameter, string value)
-		{
-			this.postParameters.Add (parameter, value);
-		}
+    private static string Encode(Dictionary<string, string> parameters) =>
+        string.Join("&", parameters.Select(p => Uri.EscapeDataString(p.Key) + "=" + Uri.EscapeDataString(p.Value)));
 
-		public void ClearPostParameters()
-		{
-			this.postParameters.Clear ();
-		}
-	
-		public override string ToString()
-		{
-			StringBuilder request = new StringBuilder ();
+    private void Validate()
+    {
+        if (Uri is null || !Uri.IsAbsoluteUri || (Uri.Scheme != "http" && Uri.Scheme != "https"))
+            throw new ArgumentException("An absolute HTTP or HTTPS URL is required.", nameof(Uri));
+        if (Uri.UserInfo.Length != 0)
+            throw new ArgumentException("Use an Authorization header instead of URL credentials.", nameof(Uri));
+        if (!IsToken(Method)) throw new ArgumentException("Invalid HTTP method.", nameof(Method));
+        if (Version != HTTPVersion.HTTP10 && Version != HTTPVersion.HTTP11)
+            throw new ArgumentException("Only HTTP/1.0 and HTTP/1.1 are supported.", nameof(Version));
+    }
 
-			request.Append (CreateRequestLine ());
-			request.Append (CreateHeaders ());
-			request.Append (CreatePostParameters ());
+    internal static void ValidateHeader(string name, string value)
+    {
+        if (!IsToken(name)) throw new ArgumentException("Invalid HTTP header name.", nameof(name));
+        if (value is null || value.Any(c => c == '\r' || c == '\n' || c == '\0' || (c < ' ' && c != '\t') || c == 127))
+            throw new ArgumentException("Invalid HTTP header value.", nameof(value));
+    }
 
-			return request.ToString ();
-		}
+    private static bool IsToken(string? value) => !string.IsNullOrEmpty(value) &&
+        value.All(c => c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || "!#$%&'*+-.^_`|~".Contains(c));
 
-		private string CreateRequestLine()
-		{
-			return this.Method + ' ' + this.Uri.AbsolutePath + this.CreateGetParameters() + ' ' + this.Version + "\r\n";
-		}
-
-		private string CreateHeaders()
-		{
-			StringBuilder headers = new StringBuilder();
-			foreach (KeyValuePair<string, string> header in this.headers)
-				headers.Append (header.Key + ": " + header.Value + "\r\n");
-			headers.Append ("\r\n");
-			return headers.ToString();
-		}
-
-		private string CreateGetParameters()
-		{
-			StringBuilder getParameters = new StringBuilder ();
-			int count = 0;
-
-			foreach (KeyValuePair<string, string> getParameter in this.getParameters)
-			{
-				if (count != this.postParameters.Count - 1)
-					getParameters.Append (getParameter.Key + '=' + getParameter.Value + '&');
-				else
-					getParameters.Append (getParameter.Key + '=' + getParameter.Value);
-				count++;
-			}
-
-			return getParameters.ToString ();
-		}
-
-		private string CreatePostParameters()
-		{
-			StringBuilder postParameters = new StringBuilder ();
-			int count = 0;
-
-			foreach (KeyValuePair<string, string> postParameter in this.postParameters)
-			{
-				if (count != this.postParameters.Count - 1)
-					postParameters.Append (postParameter.Key + '=' + postParameter.Value + '&');
-				else
-					postParameters.Append (postParameter.Key + '=' + postParameter.Value);
-				count++;
-			}
-
-			return postParameters.ToString ();
-		}
-	}
+    /// <summary>Returns an HTTP/1.x diagnostic representation; the transport sends the request.</summary>
+    public override string ToString()
+    {
+        using var message = CreateMessage();
+        var output = new StringBuilder($"{Method} {message.RequestUri!.PathAndQuery} {Version}\r\n");
+        if (!headers.ContainsKey("Host")) output.Append($"Host: {message.RequestUri.Authority}\r\n");
+        foreach (var header in message.Headers)
+            output.Append($"{header.Key}: {string.Join(", ", header.Value)}\r\n");
+        if (message.Content is not null)
+        {
+            var body = message.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            foreach (var header in message.Content.Headers)
+                if (!header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                    output.Append($"{header.Key}: {string.Join(", ", header.Value)}\r\n");
+            output.Append($"Content-Length: {Encoding.UTF8.GetByteCount(body)}\r\n\r\n{body}");
+        }
+        else output.Append("\r\n");
+        return output.ToString();
+    }
 }
-

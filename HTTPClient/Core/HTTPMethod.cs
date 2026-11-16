@@ -1,17 +1,14 @@
-using System;
+namespace HttpClient.Core;
 
-namespace HttpClient.Core
+public static class HTTPMethod
 {
-	public static class HTTPMethod
-	{
-		public static string GET = "GET";
-		public static string POST = "POST";
-		public static string PUT = "PUT";
-		public static string DELETE = "DELETE";
-		public static string HEAD = "HEAD";
-		public static string OPTIONS = "OPTIONS";
-		public static string TRACE = "TRACE";
-		public static string CONNECT = "CONNECT";
-	}
+    public const string GET = "GET";
+    public const string POST = "POST";
+    public const string PUT = "PUT";
+    public const string DELETE = "DELETE";
+    public const string HEAD = "HEAD";
+    public const string OPTIONS = "OPTIONS";
+    public const string TRACE = "TRACE";
+    public const string CONNECT = "CONNECT";
+    public const string PATCH = "PATCH";
 }
-
