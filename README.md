@@ -157,8 +157,9 @@ NuGet test dependencies are pinned with a committed lock file. Package creation 
 nothing is published by these commands.
 
 GitHub Actions runs restore, both target builds, tests, the example, and package creation
-on Linux, Windows, and macOS. A local run validates only its host platform; the CI matrix
-has not run until these changes are pushed.
+on Linux, Windows, and macOS. A local run validates only its host platform. Check the
+[CI runs](https://github.com/kleberandrade/http-client/actions/workflows/ci.yml)
+for the results of the cross-platform matrix on each commit.
 
 ## Limitations
 

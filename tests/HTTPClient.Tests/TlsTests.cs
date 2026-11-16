@@ -20,7 +20,11 @@ public class TlsTests
     {
         using var key = RSA.Create(2048);
         var certificateRequest = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        using var certificate = certificateRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+        using var generatedCertificate = certificateRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+        // Windows Schannel needs an imported key container for server authentication.
+        // Without PersistKeySet the imported key is cleaned up when the certificate is disposed.
+        using var certificate = X509CertificateLoader.LoadPkcs12(
+            generatedCertificate.Export(X509ContentType.Pfx), null, X509KeyStorageFlags.UserKeySet);
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
@@ -38,7 +42,7 @@ public class TlsTests
             {
                 Assert.Equal("tls", (await client.RequestAsync(deadline.Token)).Body);
                 // The wrapper must not dispose the caller's transport after sending.
-                transport.DefaultRequestHeaders.Add("X-Still-Usable", "yes");
+                transport.CancelPendingRequests();
             }
             else
                 await Assert.ThrowsAsync<System.Net.Http.HttpRequestException>(() => client.RequestAsync(deadline.Token));
