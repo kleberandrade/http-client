@@ -1,5 +1,11 @@
 # HTTP Client
 
+[![C# 14](https://img.shields.io/badge/C%23-14-512BD4)](https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-14)
+[![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)](https://dotnet.microsoft.com/download/dotnet/10.0)
+[![.NET Standard 2.1](https://img.shields.io/badge/.NET_Standard-2.1-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
+[![CI](https://github.com/kleberandrade/http-client/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kleberandrade/http-client/actions/workflows/ci.yml?query=branch%3Amain)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/kleberandrade/http-client/blob/main/LICENSE)
+
 A small C# library for consuming HTTP web services. Originally written in 2014 for
 Unity mobile projects, it now uses `System.Net.Http` for connection pooling, TLS,
 HTTP framing, and decompression while keeping the `HttpClient.Core` request/response API.
